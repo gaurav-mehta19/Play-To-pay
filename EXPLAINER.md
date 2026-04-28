@@ -33,6 +33,8 @@ WHERE merchant_id = %s;
 
 A stored `balance` column is a derived value — storing it creates two sources of truth that can diverge under concurrent writes or rolled-back transactions. With an append-only ledger, every monetary event is a permanent fact. The balance is always computed from those facts inside the same transaction as any write, so it is always consistent. You also get a full audit trail for free.
 
+Critically, `compute_balance` is always called inside a `transaction.atomic()` block — either the payout creation block (`service.py:70`) or the balance fetch block (`service.py:228`). This means the aggregation query and any subsequent write (hold creation, payout row) share the same database snapshot. A concurrent credit that commits between the SELECT and the INSERT cannot silently inflate the balance the current transaction acts on.
+
 ### Why these four entry types?
 
 | Type      | Meaning |
@@ -105,6 +107,8 @@ except IntegrityError:
 
 Because the placeholder has `response_json=None`, the service detects an in-flight request and returns HTTP 409 rather than duplicating the payout. Once the winner fills in the real response, any subsequent request will find `response_json` populated and return the stored answer directly.
 
+Keys expire after 24 hours. `get_idempotency_record` in `repository.py` filters with `created_at__gt=timezone.now() - timedelta(hours=24)` — a key older than 24 hours returns `None`, and the service treats the request as new. The expiry is enforced at the query layer, not a background cleanup job, so there is no window where an expired key is accidentally honoured.
+
 ---
 
 ## 4. The State Machine
@@ -130,6 +134,8 @@ def _apply_transition(payout, new_status):
 `failed` is not a key in `VALID_TRANSITIONS`, so `VALID_TRANSITIONS.get('failed', [])` returns `[]`. Any attempt to call `_apply_transition(payout, 'completed')` on a failed payout will find `'completed' not in []` and raise. The same applies to `completed → anything` and `pending → completed/failed` (skipping processing).
 
 The model has no `clean()`, no `save()` override, and no DB-level constraint enforcing transitions — the check lives exclusively in the service layer so it can raise a typed exception rather than a cryptic IntegrityError.
+
+When a payout moves to `failed`, the `release` ledger entry and the status update are committed inside the same `transaction.atomic()` block in `_fail_payout()`. Either both commit or neither does — there is no state where a payout is marked `failed` without its funds being returned, or where funds are returned without the status flip.
 
 ---
 
@@ -157,3 +163,91 @@ This creates a race condition even with `select_for_update` because the balance 
 **What I replaced it with:**
 
 The balance is never stored. It is always computed via a single SQL aggregation over `LedgerEntry` rows, and that aggregation always runs **inside the same `transaction.atomic()` block** as any balance check or write. The merchant row is locked with `select_for_update()` to serialise concurrent requests, but the balance itself is the result of the ledger — not a column that can drift.
+
+---
+
+### Example: AI generated a flat structure — business logic mixed into views
+
+**What AI gave me:**
+
+```python
+# views.py
+class PayoutCreateView(APIView):
+    def post(self, request):
+        merchant = Merchant.objects.select_for_update().get(id=request.data['merchant_id'])
+        balance = LedgerEntry.objects.filter(merchant=merchant).aggregate(...)
+        if request.data['amount_paise'] > balance['available']:
+            return Response({'error': 'Insufficient funds'}, status=400)
+        payout = Payout.objects.create(
+            merchant=merchant,
+            amount_paise=request.data['amount_paise'],
+            status='pending',
+        )
+        LedgerEntry.objects.create(merchant=merchant, entry_type='hold', amount_paise=payout.amount_paise)
+        return Response(PayoutSerializer(payout).data, status=201)
+```
+
+**What was wrong:**
+
+All database access, balance logic, locking, and state transitions are collapsed into the view. The view now owns HTTP concerns (parsing, response codes) AND business rules (balance check, hold creation) AND data access (ORM queries). This is the "fat view" pattern. Problems:
+
+- Business rules cannot be reused from Celery tasks — the worker would have to import and call the view, or duplicate the logic.
+- The idempotency check, state machine, and retry logic have nowhere clean to live — they get bolted onto the view, making it untestable in isolation.
+- There is no seam between "what the HTTP layer receives" and "what the money engine does", so a future gRPC or CLI caller would need to replicate all of it.
+
+**What I replaced it with:**
+
+A strict three-layer separation enforced across every endpoint:
+
+```
+views.py       → HTTP only: parse input, validate types, call service, return Response
+service.py     → Business logic only: transactions, state machine, idempotency, balance checks
+repository.py  → Data access only: all ORM queries, no business rules
+```
+
+The view for payout creation does nothing except validate the request shape and delegate:
+
+```python
+# views.py — HTTP layer only
+response_data, http_status = service.create_payout(
+    merchant_id=merchant_id,
+    amount_paise=amount_paise,
+    bank_account_id=bank_account_id,
+    idempotency_key=idempotency_key,
+)
+return Response(response_data, status=http_status)
+```
+
+The Celery task calls `service.process_payout(payout_id)` directly — the same function, no duplication. The state machine, lock, and idempotency logic live once in `service.py` and are exercised identically whether the caller is an HTTP request or a background worker.
+
+---
+
+### Example: AI generated an unlocked read-then-write — overdraft under concurrency
+
+**What AI gave me:**
+
+```python
+balance = repo.get_balance(merchant_id)
+if balance < amount:
+    raise Exception("Insufficient balance")
+repo.create_payout(...)
+repo.insert_ledger_hold(...)
+```
+
+**What was wrong:**
+
+Two concurrent requests both read the same balance before either writes. With a 100 paise balance, two 60 paise requests both pass the check and both create holds — leaving the balance at -20. No lock, no atomicity, classic check-then-act race.
+
+**What I replaced it with:**
+
+```python
+with transaction.atomic():
+    merchant = repository.get_merchant_for_update(merchant_id)  # SELECT ... FOR UPDATE
+    balance  = repository.compute_balance(merchant_id)
+    if amount_paise > balance['available_paise']:
+        return error_response, 400
+    repository.create_payout(...)
+    repository.create_ledger_entry(..., entry_type='hold', ...)
+```
+
+`select_for_update()` locks the `Merchant` row for the transaction's duration. A second concurrent request blocks at the DB kernel until the first commits. The balance read, check, and hold creation are all inside the same atomic block — no window for a stale read.

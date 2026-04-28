@@ -13,7 +13,7 @@ def process_payout(self, payout_id):
         service.process_payout(payout_id)
     except Exception as exc:
         logger.exception("process_payout failed for %s: %s", payout_id, exc)
-        raise self.retry(exc=exc, countdown=5)
+        raise self.retry(exc=exc, countdown=5 * (2 ** self.request.retries))
 
 
 @shared_task(name='payouts.tasks.detect_stuck_payouts')
