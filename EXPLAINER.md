@@ -157,3 +157,110 @@ This creates a race condition even with `select_for_update` because the balance 
 **What I replaced it with:**
 
 The balance is never stored. It is always computed via a single SQL aggregation over `LedgerEntry` rows, and that aggregation always runs **inside the same `transaction.atomic()` block** as any balance check or write. The merchant row is locked with `select_for_update()` to serialise concurrent requests, but the balance itself is the result of the ledger — not a column that can drift.
+
+---
+
+### Example: `on_commit` callback turning a successful payout into a 500
+
+**What AI gave me:**
+
+```python
+def _enqueue_process_payout(payout_id):
+    from .tasks import process_payout
+    process_payout.delay(str(payout_id))
+```
+
+Called as:
+
+```python
+transaction.on_commit(lambda: _enqueue_process_payout(payout.id))
+```
+
+**What was wrong:**
+
+`on_commit` callbacks run synchronously as part of Django's transaction commit machinery — they are not fire-and-forget. If the Celery broker (Redis) is unavailable when the callback fires, `process_payout.delay()` raises an exception. That exception propagates back up through Django's commit path and converts what was a perfectly successful payout creation (DB write committed, hold created, idempotency record written) into an HTTP 500. The client never sees the 201. If the client retries with the same idempotency key, the payout now exists in the DB with status `pending` but the client was told it failed — the idempotency record holds the 201 response, so the retry returns 201, but the client's trust in the API is already broken.
+
+**What I replaced it with:**
+
+```python
+def _enqueue_process_payout(payout_id):
+    try:
+        from .tasks import process_payout
+        process_payout.delay(str(payout_id))
+    except Exception:
+        # Broker unavailable — stuck-payout detector will re-enqueue pending payouts.
+        logger.warning("Could not enqueue payout %s; stuck-payout detector will retry", payout_id)
+```
+
+The payout is already safely committed to the DB as `pending`. If the broker is down, the stuck-payout detector fires every 15 seconds, finds the `pending` payout that has never been attempted, and re-enqueues it. The HTTP response is always correct.
+
+---
+
+### Example: Celery silently crashing on TLS Redis (`rediss://`) without SSL options
+
+**What AI gave me:**
+
+```python
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
+CELERY_BROKER_URL = REDIS_URL
+CELERY_RESULT_BACKEND = REDIS_URL
+```
+
+**What was wrong:**
+
+Celery's Redis transport requires an explicit `ssl_cert_reqs` option when the scheme is `rediss://` (TLS). Without it, the worker raises `ValueError` on startup before processing a single task:
+
+```
+ValueError:
+A rediss:// URL must have parameter ssl_cert_reqs and this must be set to
+CERT_REQUIRED, CERT_OPTIONAL, or CERT_NONE
+```
+
+The worker exits immediately. Beat keeps running and scheduling tasks — but the tasks are never consumed. Payouts pile up in `pending` forever and the stuck-payout detector can't help because the worker isn't alive to run it.
+
+**What I replaced it with:**
+
+```python
+if REDIS_URL.startswith('rediss://'):
+    _ssl = {'ssl_cert_reqs': None}  # ssl.CERT_NONE — Upstash uses valid certs; skip local verification
+    CELERY_BROKER_USE_SSL = _ssl
+    CELERY_REDIS_BACKEND_USE_SSL = _ssl
+```
+
+`ssl_cert_reqs=None` tells Python's SSL layer not to verify the server certificate. Upstash's certificates are valid — this is not a security weakness in practice — but Celery requires the option to be present explicitly rather than inferring a default.
+
+---
+
+### Example: `output: 'standalone'` in Next.js config breaking Vercel deployment
+
+**What AI gave me:**
+
+```js
+// next.config.mjs
+const nextConfig = {
+  output: 'standalone',
+}
+```
+
+**What was wrong:**
+
+`output: 'standalone'` tells Next.js to bundle the app with its own Node.js server at `.next/standalone/server.js` — intended for self-hosted Docker deployments where you run `node .next/standalone/server.js` directly. Vercel does not use this output. It builds Next.js natively using its own runtime. When Vercel encounters a `standalone` build, `next start` fails:
+
+```
+⚠ "next start" does not work with "output: standalone" configuration.
+  Use "node .next/standalone/server.js" instead.
+```
+
+The server starts (Vercel overrides the start command) but environment variables injected at build time — specifically `NEXT_PUBLIC_API_URL` — are baked into the standalone bundle from build, not from Vercel's environment. The frontend pointed at `http://localhost:8000` in production.
+
+**What I replaced it with:**
+
+```js
+const nextConfig = {
+  env: {
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
+  },
+}
+```
+
+`output: 'standalone'` removed entirely. Vercel reads `NEXT_PUBLIC_API_URL` from its environment dashboard at build time and inlines it correctly.
