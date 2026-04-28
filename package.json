@@ -1,0 +1,10 @@
+{
+  "name": "playtopay",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "docker compose up",
+    "dev:build": "docker compose up --build",
+    "dev:down": "docker compose down"
+  }
+}
