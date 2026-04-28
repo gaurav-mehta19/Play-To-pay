@@ -75,10 +75,16 @@ export async function getBalance(merchantId: string): Promise<BalanceResponse> {
   return handleResponse<BalanceResponse>(res)
 }
 
-export async function getPayouts(merchantId: string): Promise<Payout[]> {
-  const res = await fetch(`${API_BASE}/api/v1/merchants/${merchantId}/payouts/`)
-  const page = await handleResponse<{ results: Payout[] }>(res)
-  return page.results
+export interface PayoutsPage {
+  count: number
+  next: string | null
+  previous: string | null
+  results: Payout[]
+}
+
+export async function getPayouts(merchantId: string, page = 1): Promise<PayoutsPage> {
+  const res = await fetch(`${API_BASE}/api/v1/merchants/${merchantId}/payouts/?page=${page}`)
+  return handleResponse<PayoutsPage>(res)
 }
 
 export async function getLedger(merchantId: string, page: number): Promise<LedgerPage> {

@@ -4,57 +4,67 @@ import { useCallback, useEffect, useState } from 'react'
 import { type Payout, createPayout as apiCreatePayout, getPayouts } from '@/lib/api'
 import { usePolling } from './usePolling'
 
+const PAGE_SIZE = 10
 const ACTIVE_STATUSES = new Set(['pending', 'processing'])
-
-function mergePayouts(existing: Payout[], fresh: Payout[]): Payout[] {
-  const map = new Map(existing.map((p) => [p.id, p]))
-  for (const p of fresh) {
-    map.set(p.id, p)
-  }
-  // Preserve order: most recently created first
-  return Array.from(map.values()).sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-  )
-}
 
 export function usePayouts(merchantId: string, onBalanceRefresh?: () => void) {
   const [payouts, setPayouts] = useState<Payout[]>([])
+  const [page, setPage] = useState(1)
+  const [totalCount, setTotalCount] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const fetchPayouts = useCallback(async () => {
+  useEffect(() => {
+    setPage(1)
+    setPayouts([])
+    setTotalCount(0)
+  }, [merchantId])
+
+  const fetchCurrentPage = useCallback(async () => {
     if (!merchantId) return
     try {
-      const fresh = await getPayouts(merchantId)
-      setPayouts((prev) => mergePayouts(prev, fresh))
+      const result = await getPayouts(merchantId, page)
+      setPayouts(result.results)
+      setTotalCount(result.count)
       onBalanceRefresh?.()
     } catch (e: unknown) {
-      // Non-fatal during polling
       if (e instanceof Error) setError(e.message)
     }
-  }, [merchantId, onBalanceRefresh])
+  }, [merchantId, page, onBalanceRefresh])
 
-  // Initial load
   useEffect(() => {
-    setPayouts([])
     setIsLoading(true)
-    fetchPayouts().finally(() => setIsLoading(false))
-  }, [merchantId, fetchPayouts])
+    fetchCurrentPage().finally(() => setIsLoading(false))
+  }, [fetchCurrentPage])
 
-  const isPolling = payouts.some((p) => ACTIVE_STATUSES.has(p.status))
-
-  usePolling(fetchPayouts, 3_000, isPolling)
+  const hasActive = payouts.some((p) => ACTIVE_STATUSES.has(p.status))
+  usePolling(fetchCurrentPage, 3_000, hasActive)
 
   const submitPayout = useCallback(
     async (amountPaise: number, bankAccountId: string) => {
       setError(null)
       const payout = await apiCreatePayout(merchantId, amountPaise, bankAccountId)
-      // Optimistically insert as pending so the row appears immediately
-      setPayouts((prev) => mergePayouts(prev, [payout]))
-      // Balance will refresh on the next poll cycle via onBalanceRefresh
+      if (page === 1) {
+        setPayouts((prev) => [payout, ...prev].slice(0, PAGE_SIZE))
+        setTotalCount((prev) => prev + 1)
+      } else {
+        setPage(1)
+      }
     },
-    [merchantId],
+    [merchantId, page],
   )
 
-  return { payouts, isLoading, error, setError, createPayout: submitPayout, isPolling }
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+
+  return {
+    payouts,
+    isLoading,
+    error,
+    setError,
+    createPayout: submitPayout,
+    page,
+    totalPages,
+    totalCount,
+    goToPage: setPage,
+  }
 }

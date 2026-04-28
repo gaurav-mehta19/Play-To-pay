@@ -97,6 +97,11 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
+if REDIS_URL.startswith('rediss://'):
+    _ssl = {'ssl_cert_reqs': None}
+    CELERY_BROKER_USE_SSL = _ssl
+    CELERY_REDIS_BACKEND_USE_SSL = _ssl
+
 # CORS — comma-separated origins in env: "https://app.example.com,http://localhost:3000"
 _cors_origins = os.environ.get('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://frontend:3000')
 CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_origins.split(',') if o.strip()]

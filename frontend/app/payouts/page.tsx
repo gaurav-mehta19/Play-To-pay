@@ -11,10 +11,17 @@ import { useMerchantContext } from '../MerchantContext'
 export default function PayoutsPage() {
   const { selectedMerchantId } = useMerchantContext()
   const { balance, isLoading: balanceLoading, refresh: refreshBalance } = useBalance(selectedMerchantId)
-  const { payouts, isLoading, error, setError, createPayout } = usePayouts(
-    selectedMerchantId,
-    refreshBalance,
-  )
+  const {
+    payouts,
+    isLoading,
+    error,
+    setError,
+    createPayout,
+    page,
+    totalPages,
+    totalCount,
+    goToPage,
+  } = usePayouts(selectedMerchantId, refreshBalance)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const handleSubmit = async (amountPaise: number, bankAccountId: string) => {
@@ -38,16 +45,31 @@ export default function PayoutsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 h-full">
       <h1 className="text-2xl font-bold text-gray-900">Payouts</h1>
-      <BalanceCard balance={balance} isLoading={balanceLoading} />
-      <PayoutForm
-        onSubmit={handleSubmit}
-        isSubmitting={isSubmitting}
-        error={error}
-        onInputChange={() => setError(null)}
-      />
-      <PayoutTable payouts={payouts} isLoading={isLoading} />
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        {/* Left — wallet + new payout */}
+        <div className="space-y-6">
+          <BalanceCard balance={balance} isLoading={balanceLoading} />
+          <PayoutForm
+            onSubmit={handleSubmit}
+            isSubmitting={isSubmitting}
+            error={error}
+            onInputChange={() => setError(null)}
+          />
+        </div>
+
+        {/* Right — payout history */}
+        <PayoutTable
+          payouts={payouts}
+          isLoading={isLoading}
+          page={page}
+          totalPages={totalPages}
+          totalCount={totalCount}
+          onPageChange={goToPage}
+        />
+      </div>
     </div>
   )
 }
