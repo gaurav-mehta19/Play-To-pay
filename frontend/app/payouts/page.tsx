@@ -28,10 +28,10 @@ export default function PayoutsPage() {
     setIsSubmitting(true)
     try {
       await createPayout(amountPaise, bankAccountId)
-      refreshBalance()
     } catch (e: unknown) {
       if (e instanceof Error) setError(e.message)
     } finally {
+      refreshBalance()
       setIsSubmitting(false)
     }
   }
