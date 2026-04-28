@@ -3,8 +3,14 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "docker compose up",
-    "dev:build": "docker compose up --build",
-    "dev:down": "docker compose down"
+    "install": "cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && cd ../frontend && npm install",
+    "migrate": "cd backend && .venv/bin/python manage.py migrate",
+    "seed": "cd backend && .venv/bin/python manage.py seed_merchants",
+    "backend": "concurrently --names 'api,worker,beat' --prefix-colors 'cyan,yellow,magenta' \"cd backend && .venv/bin/python manage.py runserver\" \"cd backend && .venv/bin/celery -A config worker --loglevel=info --concurrency=4\" \"cd backend && .venv/bin/celery -A config beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler\"",
+    "frontend": "cd frontend && npm run dev",
+    "test": "cd backend && .venv/bin/python manage.py test tests.test_concurrency tests.test_idempotency"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
   }
 }

@@ -1,3 +1,4 @@
+import json
 import logging
 import random
 from datetime import timedelta
@@ -51,8 +52,8 @@ def create_payout(merchant_id, amount_paise, bank_account_id, idempotency_key):
     """
     # 1. Check existing idempotency record (read before any write).
     existing = repository.get_idempotency_record(merchant_id, idempotency_key)
-    if existing and existing.response_json is not None:
-        return existing.response_json, existing.status_code
+    if existing and existing.response_body is not None:
+        return existing.response_body, existing.status_code
 
     # 2. Insert placeholder — real race guard.
     idem_record, created = repository.create_idempotency_record_placeholder(merchant_id, idempotency_key)
@@ -60,8 +61,8 @@ def create_payout(merchant_id, amount_paise, bank_account_id, idempotency_key):
     if not created:
         # Another request already owns this key.
         # If it finished, return its response. If still in-flight return 409.
-        if idem_record.response_json is not None:
-            return idem_record.response_json, idem_record.status_code
+        if idem_record.response_body is not None:
+            return idem_record.response_body, idem_record.status_code
         return {'error': 'Request with this idempotency key is already being processed'}, 409
 
     # 3. Core transaction: lock merchant, check balance, create payout + hold.
@@ -88,12 +89,13 @@ def create_payout(merchant_id, amount_paise, bank_account_id, idempotency_key):
 
             from .serializers import PayoutSerializer
             payout_data = PayoutSerializer(payout).data
-            repository.update_idempotency_record(idem_record.id, payout_data, 201)
+            response_body = json.dumps(dict(payout_data))
+            repository.update_idempotency_record(idem_record.id, response_body, 201)
 
             # Enqueue only after the transaction commits to avoid phantom tasks.
             transaction.on_commit(lambda: _enqueue_process_payout(payout.id))
 
-        return payout_data, 201
+        return response_body, 201
 
     except MerchantNotFoundError:
         error_response = {'error': f'Merchant {merchant_id} not found'}
@@ -102,8 +104,12 @@ def create_payout(merchant_id, amount_paise, bank_account_id, idempotency_key):
 
 
 def _enqueue_process_payout(payout_id):
-    from .tasks import process_payout
-    process_payout.delay(str(payout_id))
+    try:
+        from .tasks import process_payout
+        process_payout.delay(str(payout_id))
+    except Exception:
+        # Broker unavailable — stuck-payout detector will re-enqueue pending payouts.
+        logger.warning("Could not enqueue payout %s; stuck-payout detector will retry", payout_id)
 
 
 # ---------------------------------------------------------------------------

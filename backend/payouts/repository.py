@@ -86,7 +86,7 @@ def create_idempotency_record_placeholder(merchant_id, key):
         record, created = IdempotencyRecord.objects.get_or_create(
             merchant_id=merchant_id,
             key=key,
-            defaults={'response_json': None, 'status_code': None},
+            defaults={'response_body': None, 'status_code': None},
         )
         return record, created
     except IntegrityError:
@@ -96,9 +96,9 @@ def create_idempotency_record_placeholder(merchant_id, key):
         return record, False
 
 
-def update_idempotency_record(record_id, response_json, status_code):
+def update_idempotency_record(record_id, response_body, status_code):
     IdempotencyRecord.objects.filter(id=record_id).update(
-        response_json=response_json,
+        response_body=response_body,
         status_code=status_code,
     )
 

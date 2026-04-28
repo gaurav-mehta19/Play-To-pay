@@ -1,5 +1,6 @@
 import uuid
 
+from django.http import HttpResponse
 from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
@@ -103,6 +104,8 @@ class PayoutCreateView(APIView):
             bank_account_id=bank_account_id,
             idempotency_key=idempotency_key,
         )
+        if isinstance(response_data, str):
+            return HttpResponse(response_data, content_type='application/json', status=http_status)
         return Response(response_data, status=http_status)
 
 

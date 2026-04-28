@@ -1,7 +1,16 @@
 import os
+import ssl
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load backend/.env for local (bare-metal) runs.
+# override=False means Docker env vars (set in docker-compose.yml) always win.
+_local_env = BASE_DIR / '.env'
+if _local_env.exists():
+    load_dotenv(_local_env, override=False)
 
 SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-key-not-for-production')
 
@@ -98,7 +107,7 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
 if REDIS_URL.startswith('rediss://'):
-    _ssl = {'ssl_cert_reqs': None}
+    _ssl = {'ssl_cert_reqs': ssl.CERT_NONE}
     CELERY_BROKER_USE_SSL = _ssl
     CELERY_REDIS_BACKEND_USE_SSL = _ssl
 
@@ -110,6 +119,8 @@ CORS_ALLOW_ALL_ORIGINS = os.environ.get('CORS_ALLOW_ALL', 'False') == 'True'
 
 from corsheaders.defaults import default_headers
 CORS_ALLOW_HEADERS = list(default_headers) + ['idempotency-key']
+
+TEST_RUNNER = 'config.test_runner.DroppingTestRunner'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [],

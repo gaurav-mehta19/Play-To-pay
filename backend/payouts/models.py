@@ -70,7 +70,7 @@ class IdempotencyRecord(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     merchant = models.ForeignKey(Merchant, on_delete=models.PROTECT, related_name='idempotency_records')
     key = models.CharField(max_length=255)
-    response_json = models.JSONField(null=True, blank=True)
+    response_body = models.TextField(null=True, blank=True)
     status_code = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
