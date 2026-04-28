@@ -5,8 +5,16 @@ interface Props {
   isLoading: boolean
 }
 
-function SkeletonBlock({ width = 'w-24', height = 'h-8' }: { width?: string; height?: string }) {
-  return <div className={`${height} ${width} bg-gray-200 rounded animate-pulse`} />
+function SkeletonBlock({
+  width = 'w-24',
+  height = 'h-8',
+  color = 'bg-gray-200',
+}: {
+  width?: string
+  height?: string
+  color?: string
+}) {
+  return <div className={`${height} ${width} ${color} rounded-lg animate-pulse`} />
 }
 
 export function BalanceCard({ balance, isLoading }: Props) {
@@ -28,7 +36,7 @@ export function BalanceCard({ balance, isLoading }: Props) {
             Wallet Balance
           </p>
           {showSkeleton ? (
-            <SkeletonBlock width="w-40" height="h-10" />
+            <SkeletonBlock width="w-36" height="h-9" color="bg-gray-200" />
           ) : (
             <p className="text-4xl font-bold text-gray-900">
               ₹{totalInr}
@@ -45,7 +53,7 @@ export function BalanceCard({ balance, isLoading }: Props) {
             <p className="text-xs font-medium text-green-700">Available</p>
           </div>
           {showSkeleton ? (
-            <SkeletonBlock width="w-28" />
+            <SkeletonBlock width="w-24" height="h-7" color="bg-green-200" />
           ) : (
             <p className="text-2xl font-bold text-green-700">
               ₹{balance?.available_inr ?? '0.00'}
@@ -60,7 +68,7 @@ export function BalanceCard({ balance, isLoading }: Props) {
             <p className="text-xs font-medium text-amber-700">On Hold</p>
           </div>
           {showSkeleton ? (
-            <SkeletonBlock width="w-24" />
+            <SkeletonBlock width="w-20" height="h-7" color="bg-amber-200" />
           ) : (
             <p className="text-2xl font-bold text-amber-600">
               ₹{balance?.held_inr ?? '0.00'}
@@ -69,6 +77,13 @@ export function BalanceCard({ balance, isLoading }: Props) {
           <p className="text-xs text-amber-600 mt-1">Payout in progress</p>
         </div>
       </div>
+
+      {showSkeleton && (
+        <div className="space-y-1.5">
+          <div className="h-2 w-full bg-gray-200 rounded-full animate-pulse" />
+          <div className="h-3 w-20 bg-gray-100 rounded animate-pulse" />
+        </div>
+      )}
 
       {balance && totalPaise > 0 && (
         <div>
