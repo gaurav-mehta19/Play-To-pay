@@ -5,20 +5,20 @@ import { useBalance } from '@/hooks/useBalance'
 import { useMerchantContext } from '../MerchantContext'
 
 export default function DashboardPage() {
-  const { selectedMerchantId } = useMerchantContext()
-  const { balance, isLoading } = useBalance(selectedMerchantId)
+  const { selectedMerchantId, isLoading: merchantsLoading } = useMerchantContext()
+  const { balance, isLoading: balanceLoading } = useBalance(selectedMerchantId)
 
-  if (!selectedMerchantId) {
-    return (
-      <div className="text-center text-gray-400 py-16">
-        Select a merchant to view balance
-      </div>
-    )
-  }
+  const isLoading = merchantsLoading || balanceLoading
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+      <div className="h-8 flex items-center">
+        {merchantsLoading ? (
+          <div className="w-32 h-7 bg-gray-200 rounded-lg animate-pulse" />
+        ) : (
+          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+        )}
+      </div>
       <BalanceCard balance={balance} isLoading={isLoading} />
     </div>
   )

@@ -7,7 +7,7 @@ import { useMerchantContext } from './MerchantContext'
 
 export function NavBar() {
   const pathname = usePathname()
-  const { merchants, selectedMerchantId, setSelectedMerchantId } = useMerchantContext()
+  const { merchants, selectedMerchantId, setSelectedMerchantId, isLoading } = useMerchantContext()
 
   const navLink = (href: string, label: string) => (
     <Link
@@ -35,6 +35,7 @@ export function NavBar() {
             merchants={merchants}
             selected={selectedMerchantId}
             onChange={setSelectedMerchantId}
+            isLoading={isLoading}
           />
         </div>
       </div>
