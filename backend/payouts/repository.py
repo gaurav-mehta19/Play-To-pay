@@ -152,3 +152,12 @@ def get_stuck_payout_ids(threshold):
             last_attempted_at__lt=threshold,
         ).values_list('id', flat=True)
     )
+
+
+def get_stuck_pending_payout_ids(threshold):
+    return list(
+        Payout.objects.filter(
+            status='pending',
+            created_at__lt=threshold,
+        ).values_list('id', flat=True)
+    )

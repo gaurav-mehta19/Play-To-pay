@@ -108,7 +108,6 @@ def _enqueue_process_payout(payout_id):
         from .tasks import process_payout
         process_payout.delay(str(payout_id))
     except Exception:
-        # Broker unavailable — stuck-payout detector will re-enqueue pending payouts.
         logger.warning("Could not enqueue payout %s; stuck-payout detector will retry", payout_id)
 
 
@@ -184,10 +183,29 @@ def _fail_payout(payout_id):
 
 def handle_stuck_payouts():
     threshold = timezone.now() - timedelta(seconds=30)
-    stuck_ids = repository.get_stuck_payout_ids(threshold)
 
-    for payout_id in stuck_ids:
+    for payout_id in repository.get_stuck_pending_payout_ids(threshold):
+        _re_enqueue_pending_payout(payout_id)
+
+    for payout_id in repository.get_stuck_payout_ids(threshold):
         _handle_single_stuck_payout(payout_id)
+
+
+def _re_enqueue_pending_payout(payout_id):
+    with transaction.atomic():
+        try:
+            payout = repository.get_payout_for_update(payout_id)
+        except Exception:
+            return
+        if payout.status != 'pending':
+            return
+
+    def _enqueue():
+        from .tasks import process_payout as task
+        task.delay(str(payout_id))
+
+    transaction.on_commit(_enqueue)
+    logger.info("Pending payout %s re-enqueued by stuck-payout detector", payout_id)
 
 
 def _handle_single_stuck_payout(payout_id):
